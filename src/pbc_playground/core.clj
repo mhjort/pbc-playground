@@ -7,19 +7,46 @@
 (-> (buddy-hash/sha256 s)
     (codecs/bytes->hex)))
 
-(defn- generate-block [data previous]
-  (let [block {:index (if previous
-                        (inc (:index previous))
-                        0) ;Genesis
-               :timestamp (OffsetDateTime/now)
-               :data data
-               :precedingHash (:hash previous)}]
-    (assoc block :hash (sha256 (pr-str block)))))
+(defn- generate-transaction [data previous]
+  (let [data {:timestamp (OffsetDateTime/now)
+              :data data
+              :precedingHash (:hash previous)}]
+    {:input previous
+     :output {:hash (sha256 (pr-str data)) :data data}}))
 
-(defn- add-new-block [chain data]
+(defn- add-transaction [chain transaction]
+  (cons (:output transaction) chain))
+
+(defn- add-new-transaction [chain data]
   (let [previous(first chain)
-        block (generate-block data previous)]
-    (cons block chain)))
+        transaction (generate-transaction data previous)]
+    (add-transaction chain transaction)))
 
-(-> (add-new-block [] "a")
-    (add-new-block "b"))
+(defn- validate-transaction [input output]
+  (and (= (:hash input) (-> output :data :precedingHash))
+       (= (:hash output) (sha256 (pr-str (:data output))))))
+
+(defn- validate-chain [chain]
+  (if (= 1 (count chain))
+    true
+    (if-not (validate-transaction (second chain) (first chain))
+      false
+      (validate-chain (rest chain)))))
+
+(let [chain (-> (add-new-transaction [] "a")
+    (add-new-transaction "b"))]
+  (validate-chain chain))
+
+(let [chain (-> (add-new-transaction [] "a"))]
+  (validate-chain chain))
+
+(let [chain (-> (add-new-transaction [] "a")
+                (add-new-transaction "b")
+                (add-new-transaction "c"))]
+  (validate-chain chain))
+
+(let [real-transaction (generate-transaction "a" nil)
+      fake-transaction (assoc-in (generate-transaction "fake" real-transaction) [:output :hash] "fake-hash")
+      invalid-chain (-> (add-transaction [] real-transaction)
+                        (add-transaction fake-transaction))]
+  (validate-chain invalid-chain))
