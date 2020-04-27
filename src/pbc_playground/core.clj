@@ -20,17 +20,17 @@
 (defn- verify-sign [data signature]
   (dsa/verify data (codecs/hex->bytes signature) {:key public-key :alg signing-algorithm}))
 
-(defn- serialise-state [state]
-  (pr-str state))
+(defn- serialize [data]
+  (pr-str data))
 
 (defn- generate-transaction [data previous]
-  (let [data {:timestamp (OffsetDateTime/now)
-              :validator "(fn [input output] (= output (inc input)))"
-              :data data
-              :precedingHash (:hash previous)}
-        serialized (serialise-state data)]
+  (let [block {:timestamp (OffsetDateTime/now)
+               :validator "(fn [input output] (= output (inc input)))"
+               :data data
+               :precedingHash (:hash previous)}
+        serialized (serialize block)]
     {:hash (sha256 serialized)
-     :data data
+     :block block
      :signature (sign serialized)}))
 
 (defn- add-transaction [chain transaction]
@@ -42,15 +42,15 @@
     (add-transaction chain transaction)))
 
 (defn- validate-transaction-hash [input output]
-  (and (= (:hash input) (-> output :data :precedingHash))
-       (= (:hash output) (sha256 (serialise-state (:data output))))))
+  (and (= (:hash input) (-> output :block :precedingHash))
+       (= (:hash output) (sha256 (serialize (:block output))))))
 
 (defn- validate-transaction-code [input output]
-  (let [validator-fn (-> output :data :validator read-string eval)]
-    (validator-fn (-> input :data :data) (-> output :data :data))))
+  (let [validator-fn (-> output :block :validator read-string eval)]
+    (validator-fn (-> input :block :data) (-> output :block :data))))
 
-(defn- validate-signature [{:keys [signature data]}]
-  (verify-sign (serialise-state data) signature))
+(defn- validate-signature [{:keys [signature block]}]
+  (verify-sign (serialize block) signature))
 
 (defn- validate-transaction [input output]
   (and (validate-transaction-hash input output)
