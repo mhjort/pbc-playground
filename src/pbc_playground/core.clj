@@ -17,8 +17,9 @@
 
 (def signing-algorithm :rsassa-pss+sha256)
 
-(def bank-node {:id "Bank" :private-key (read-private-key "private") :public-key (read-public-key "public")})
-(def nodes [bank-node])
+(def nodes
+  {"Bank" {:id "Bank" :private-key (read-private-key "private") :public-key (read-public-key "public")}})
+(def bank-node (get nodes "Bank"))
 
 (defn- sign [data private-key]
   (-> (dsa/sign data {:key private-key :alg signing-algorithm})
@@ -57,13 +58,21 @@
   (let [validator-fn (-> output :block :validator read-string eval)]
     (validator-fn (-> input :block :data) (-> output :block :data))))
 
-(defn- validate-signature [{:keys [signatures block]} nodes]
-  (verify-sign (serialize block) (first (vals signatures)) (:public-key (first nodes))))
+(defn- validate-required-signatures [{:keys [signatures block]} nodes]
+  (loop [required-signers (:signers block)]
+    (if (empty? required-signers)
+      true
+      (let [required-signer (first required-signers)]
+        (if (verify-sign (serialize block)
+                     (get signatures required-signer)
+                     (:public-key (get nodes required-signer)))
+          (recur (rest required-signers))
+          false)))))
 
 (defn- validate-transaction [input output nodes]
   (and (validate-transaction-hash input output)
        (validate-transaction-code input output)
-       (validate-signature output nodes)))
+       (validate-required-signatures output nodes)))
 
 (defn- validate-chain [chain nodes]
   (if (= 1 (count chain))
@@ -77,7 +86,7 @@
   (validate-transaction-code transaction1 transaction2))
 
 (let [chain (-> (add-new-transaction [] 1 bank-node)
-    (add-new-transaction 2 bank-node))]
+                (add-new-transaction 2 bank-node))]
   (validate-chain chain nodes))
 
 (let [chain (-> (add-new-transaction [] 1 bank-node))]
