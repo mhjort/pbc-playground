@@ -1,5 +1,6 @@
 (ns pbc-playground.core
-  (:require [buddy.core.hash :as buddy-hash]
+  (:require [clojure.test :refer [deftest is]]
+            [buddy.core.hash :as buddy-hash]
             [buddy.core.codecs :as codecs]
             [buddy.core.keys :as buddy-keys]
             [buddy.core.dsa :as dsa])
@@ -85,20 +86,24 @@
       transaction2 (generate-transaction 3 transaction1 bank-node)]
   (validate-transaction-code transaction1 transaction2))
 
-(let [chain (-> (add-new-transaction [] 1 bank-node)
-                (add-new-transaction 2 bank-node))]
-  (validate-chain chain nodes))
+(deftest valid-chain
+  (let [chain (-> (add-new-transaction [] 1 bank-node)
+                  (add-new-transaction 2 bank-node))]
+    (is (validate-chain chain nodes))))
 
-(let [chain (-> (add-new-transaction [] 1 bank-node))]
-  (validate-chain chain nodes))
+(deftest valid-chain-with-only-genesis-block
+  (let [chain (-> (add-new-transaction [] 1 bank-node))]
+    (is (validate-chain chain nodes))))
 
-(let [chain (-> (add-new-transaction [] 1 bank-node)
-                (add-new-transaction 2 bank-node)
-                (add-new-transaction 4 bank-node))]
-  (validate-chain chain nodes))
+(deftest code-contract-fails
+  (let [chain (-> (add-new-transaction [] 1 bank-node)
+                  (add-new-transaction 2 bank-node)
+                  (add-new-transaction 4 bank-node))]
+    (is (not (validate-chain chain nodes)))))
 
-(let [real-transaction (generate-transaction 1 nil bank-node)
-      fake-transaction (assoc (generate-transaction 2 real-transaction bank-node) :hash "fake-hash")
-      invalid-chain (-> (add-transaction [] real-transaction)
-                        (add-transaction fake-transaction))]
-  (validate-chain invalid-chain nodes))
+(deftest hash-contract-fails
+  (let [real-transaction (generate-transaction 1 nil bank-node)
+        fake-transaction (assoc (generate-transaction 2 real-transaction bank-node) :hash "fake-hash")
+        invalid-chain (-> (add-transaction [] real-transaction)
+                          (add-transaction fake-transaction))]
+    (is (not (validate-chain invalid-chain nodes)))))
