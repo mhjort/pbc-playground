@@ -45,7 +45,7 @@
                :validator "(fn [input output] (= output (inc input)))"
                :data data
                :signers signers
-               :precedingHash (:hash previous)}
+               :preceedingHash (:hash previous)}
         serialized (serialize block)]
     {:hash (sha256 serialized)
      :block block
@@ -66,7 +66,7 @@
     (add-transaction chain transaction)))
 
 (defn- validate-transaction-hash [input output]
-  (and (= (:hash input) (-> output :block :precedingHash))
+  (and (= (:hash input) (-> output :block :preceedingHash))
        (= (:hash output) (sha256 (serialize (:block output))))))
 
 (defn- validate-transaction-code [input output]
@@ -98,6 +98,14 @@
       false
       (validate-chain (rest chain) nodes))))
 
+(defn notarise [spent-txs tx]
+  (let [unspent-tx-hash (-> tx :block :preceedingHash)]
+    (if (some #{unspent-tx-hash} @spent-txs)
+      false
+      (do
+        (swap! spent-txs conj unspent-tx-hash)
+        true))))
+
 (let [transaction1 (generate-and-sign-transaction 1 nil op-node)
       transaction2 (generate-and-sign-transaction 3 transaction1 op-node)]
   (validate-transaction-code transaction1 transaction2))
@@ -115,23 +123,33 @@
       nordea-chain (atom (list signed))
       op-chain (atom (list signed))
       lehman-chain (atom (list signed))
+      notary-state (atom #{})
       transaction2 (generate-transaction 2 transaction1 ["OP" "Lehman Brothers"])
       signed2 (-> transaction2
                  (sign-transaction op-node)
                  (sign-transaction lehman-node))
+      _ (notarise notary-state signed2)
       _ (swap! op-chain conj signed2)
       ;_ (swap! lehman-chain conj signed2)
       transaction-cheat (generate-transaction 2 transaction1 ["Nordea" "Lehman Brothers"])
       signed-cheat (-> transaction-cheat
                  (sign-transaction nordea-node)
                  (sign-transaction lehman-node))
+      notary-result (notarise notary-state signed-cheat)
       _ (swap! nordea-chain conj signed-cheat)
       ]
+  notary-result)
 ;  @nordea-chain)
-  [(validate-chain @nordea-chain nodes) (validate-chain @op-chain nodes) (validate-chain @lehman-chain nodes)])
+;  [(validate-chain @nordea-chain nodes) (validate-chain @op-chain nodes) (validate-chain @lehman-chain nodes)])
 
-(let [a (atom '(1))]
-  (swap! a conj 2))
+
+(deftest notarisation
+  (let [spent (atom #{})
+        transaction1 (generate-and-sign-transaction 1 nil op-node)
+        transaction2 (generate-and-sign-transaction 2 transaction1 op-node)
+        transaction-cheat (generate-and-sign-transaction 2 transaction1 op-node)]
+    (is (notarise spent transaction2))
+    (is (not (notarise spent transaction-cheat)))))
 
 (deftest valid-chain
   (let [chain (-> (add-new-transaction '() 1 op-node)
