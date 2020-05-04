@@ -19,8 +19,11 @@
 (def signing-algorithm :rsassa-pss+sha256)
 
 (def nodes
-  {"Bank" {:id "Bank" :private-key (read-private-key "private") :public-key (read-public-key "public")}})
-(def bank-node (get nodes "Bank"))
+  {"OP" {:id "OP" :private-key (read-private-key "op-private") :public-key (read-public-key "op-public")}
+   "Nordea" {:id "Nordea" :private-key (read-private-key "nordea-private") :public-key (read-public-key "nordea-public")}
+   })
+(def op-node (get nodes "OP"))
+(def nordea-node (get nodes "Nordea"))
 
 (defn- sign [data private-key]
   (-> (dsa/sign data {:key private-key :alg signing-algorithm})
@@ -32,23 +35,33 @@
 (defn- serialize [data]
   (pr-str data))
 
-(defn- generate-transaction [data previous {:keys [id private-key]}]
+(defn- sign-transaction [{:keys [block] :as tx} {:keys [id private-key]}]
+  (let [serialized (serialize block)]
+    (update tx :signatures assoc id (sign serialized private-key))))
+
+(defn- generate-transaction [data previous signers]
   (let [block {:timestamp (OffsetDateTime/now)
                :validator "(fn [input output] (= output (inc input)))"
                :data data
-               :signers [id]
+               :signers signers
                :precedingHash (:hash previous)}
         serialized (serialize block)]
     {:hash (sha256 serialized)
      :block block
-     :signatures {id (sign serialized private-key)}}))
+     :signatures {}}))
+
+(defn- generate-and-sign-transaction [data previous {:keys [id] :as node}]
+  (let [tx (generate-transaction data previous [id])]
+   (sign-transaction tx node)))
+
+;(sign-transaction (generate-and-sign-transaction 1 nil op-node) nordea-node)
 
 (defn- add-transaction [chain transaction]
   (cons transaction chain))
 
 (defn- add-new-transaction [chain data node]
   (let [previous(first chain)
-        transaction (generate-transaction data previous node)]
+        transaction (generate-and-sign-transaction data previous node)]
     (add-transaction chain transaction)))
 
 (defn- validate-transaction-hash [input output]
@@ -63,10 +76,12 @@
   (loop [required-signers (:signers block)]
     (if (empty? required-signers)
       true
-      (let [required-signer (first required-signers)]
-        (if (verify-sign (serialize block)
-                     (get signatures required-signer)
-                     (:public-key (get nodes required-signer)))
+      (let [required-signer (first required-signers)
+            signature (get signatures required-signer)]
+        (if (and signature
+                 (verify-sign (serialize block)
+                              (get signatures required-signer)
+                              (:public-key (get nodes required-signer))))
           (recur (rest required-signers))
           false)))))
 
@@ -82,28 +97,34 @@
       false
       (validate-chain (rest chain) nodes))))
 
-(let [transaction1 (generate-transaction 1 nil bank-node)
-      transaction2 (generate-transaction 3 transaction1 bank-node)]
+(let [transaction1 (generate-and-sign-transaction 1 nil op-node)
+      transaction2 (generate-and-sign-transaction 3 transaction1 op-node)]
   (validate-transaction-code transaction1 transaction2))
 
+(let [transaction1 (generate-transaction 1 nil ["OP" "Nordea"])
+      signed (-> transaction1
+                 (sign-transaction op-node)
+                 (sign-transaction nordea-node))]
+  (validate-required-signatures signed nodes))
+
 (deftest valid-chain
-  (let [chain (-> (add-new-transaction [] 1 bank-node)
-                  (add-new-transaction 2 bank-node))]
+  (let [chain (-> (add-new-transaction [] 1 op-node)
+                  (add-new-transaction 2 op-node))]
     (is (validate-chain chain nodes))))
 
 (deftest valid-chain-with-only-genesis-block
-  (let [chain (-> (add-new-transaction [] 1 bank-node))]
+  (let [chain (-> (add-new-transaction [] 1 op-node))]
     (is (validate-chain chain nodes))))
 
 (deftest code-contract-fails
-  (let [chain (-> (add-new-transaction [] 1 bank-node)
-                  (add-new-transaction 2 bank-node)
-                  (add-new-transaction 4 bank-node))]
+  (let [chain (-> (add-new-transaction [] 1 op-node)
+                  (add-new-transaction 2 op-node)
+                  (add-new-transaction 4 op-node))]
     (is (not (validate-chain chain nodes)))))
 
 (deftest hash-contract-fails
-  (let [real-transaction (generate-transaction 1 nil bank-node)
-        fake-transaction (assoc (generate-transaction 2 real-transaction bank-node) :hash "fake-hash")
+  (let [real-transaction (generate-and-sign-transaction 1 nil op-node)
+        fake-transaction (assoc (generate-and-sign-transaction 2 real-transaction op-node) :hash "fake-hash")
         invalid-chain (-> (add-transaction [] real-transaction)
                           (add-transaction fake-transaction))]
     (is (not (validate-chain invalid-chain nodes)))))

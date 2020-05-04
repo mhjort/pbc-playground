@@ -6,8 +6,12 @@ set -o nounset
 
 echo "Remember to use 'secret' as password"
 
-mkdir -p keys
-openssl genrsa -des3 -out keys/private.pem 2048
-openssl rsa -in keys/private.pem -outform PEM -pubout -out keys/public.pem
+keyprefix=$1
+private_key="$keyprefix-private.pem"
+public_key="$keyprefix-public.pem"
 
-echo "Generated 'keys/private.pem' and 'keys/public.pem'"
+mkdir -p keys
+openssl genrsa -des3 -out "keys/$private_key" 2048
+openssl rsa -in "keys/$private_key" -outform PEM -pubout -out "keys/$public_key"
+
+echo "Generated 'keys/$private_key' and 'keys/$public_key'"
