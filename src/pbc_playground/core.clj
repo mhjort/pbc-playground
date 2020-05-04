@@ -21,9 +21,10 @@
 (def nodes
   {"OP" {:id "OP" :private-key (read-private-key "op-private") :public-key (read-public-key "op-public")}
    "Nordea" {:id "Nordea" :private-key (read-private-key "nordea-private") :public-key (read-public-key "nordea-public")}
-   })
+   "Lehman Brothers" {:id "Lehman Brothers" :private-key (read-private-key "lehman-private") :public-key (read-public-key "lehman-public")}})
 (def op-node (get nodes "OP"))
 (def nordea-node (get nodes "Nordea"))
+(def lehman-node (get nodes "Lehman Brothers"))
 
 (defn- sign [data private-key]
   (-> (dsa/sign data {:key private-key :alg signing-algorithm})
@@ -57,7 +58,7 @@
 ;(sign-transaction (generate-and-sign-transaction 1 nil op-node) nordea-node)
 
 (defn- add-transaction [chain transaction]
-  (cons transaction chain))
+  (conj chain transaction))
 
 (defn- add-new-transaction [chain data node]
   (let [previous(first chain)
@@ -107,17 +108,42 @@
                  (sign-transaction nordea-node))]
   (validate-required-signatures signed nodes))
 
+(let [transaction1 (generate-transaction 1 nil ["OP" "Nordea"])
+      signed (-> transaction1
+                 (sign-transaction op-node)
+                 (sign-transaction nordea-node))
+      nordea-chain (atom (list signed))
+      op-chain (atom (list signed))
+      lehman-chain (atom (list signed))
+      transaction2 (generate-transaction 2 transaction1 ["OP" "Lehman Brothers"])
+      signed2 (-> transaction2
+                 (sign-transaction op-node)
+                 (sign-transaction lehman-node))
+      _ (swap! op-chain conj signed2)
+      ;_ (swap! lehman-chain conj signed2)
+      transaction-cheat (generate-transaction 2 transaction1 ["Nordea" "Lehman Brothers"])
+      signed-cheat (-> transaction-cheat
+                 (sign-transaction nordea-node)
+                 (sign-transaction lehman-node))
+      _ (swap! nordea-chain conj signed-cheat)
+      ]
+;  @nordea-chain)
+  [(validate-chain @nordea-chain nodes) (validate-chain @op-chain nodes) (validate-chain @lehman-chain nodes)])
+
+(let [a (atom '(1))]
+  (swap! a conj 2))
+
 (deftest valid-chain
-  (let [chain (-> (add-new-transaction [] 1 op-node)
+  (let [chain (-> (add-new-transaction '() 1 op-node)
                   (add-new-transaction 2 op-node))]
     (is (validate-chain chain nodes))))
 
 (deftest valid-chain-with-only-genesis-block
-  (let [chain (-> (add-new-transaction [] 1 op-node))]
+  (let [chain (-> (add-new-transaction '() 1 op-node))]
     (is (validate-chain chain nodes))))
 
 (deftest code-contract-fails
-  (let [chain (-> (add-new-transaction [] 1 op-node)
+  (let [chain (-> (add-new-transaction '() 1 op-node)
                   (add-new-transaction 2 op-node)
                   (add-new-transaction 4 op-node))]
     (is (not (validate-chain chain nodes)))))
@@ -125,6 +151,6 @@
 (deftest hash-contract-fails
   (let [real-transaction (generate-and-sign-transaction 1 nil op-node)
         fake-transaction (assoc (generate-and-sign-transaction 2 real-transaction op-node) :hash "fake-hash")
-        invalid-chain (-> (add-transaction [] real-transaction)
+        invalid-chain (-> (add-transaction '() real-transaction)
                           (add-transaction fake-transaction))]
     (is (not (validate-chain invalid-chain nodes)))))
